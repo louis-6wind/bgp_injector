@@ -76,7 +76,8 @@ def receive_thread(conn):
 
 
 def decode_bgp(msg):
-
+    if len(msg) < 3:
+        return
     msg_length, msg_type = struct.unpack("!HB", msg[0:3])
     if msg_type == 4:
         # print(timestamp + " - " + "Received KEEPALIVE") #uncomment to debug
