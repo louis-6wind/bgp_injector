@@ -469,24 +469,22 @@ def prefix_generator(start_address, netmask):
 
 
 if __name__ == "__main__":
-
-    BGP_PEER = "10.10.1.2"
-    BGP_PORT = 179  # BGP port
-    BGP_MSS = 4000
-
     CONFIG_FILENAME = "bgp_injector.cfg"
 
     input_file = open(CONFIG_FILENAME, "r")
 
     config = json.loads(input_file.read())
 
+    bgp_peer = config["peer_address"]
+    bgp_mss = config["mss"]
+    bgp_port = config["port"]
     rib = dict()
     timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    print(timestamp + " - " + "Starting BGP... (peer: " + str(BGP_PEER) + ")")
+    print(timestamp + " - " + "Starting BGP... (peer: " + str(bgp_peer) + ")")
 
     try:
         bgp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        bgp_socket.connect((BGP_PEER, BGP_PORT))
+        bgp_socket.connect((bgp_peer, bgp_port))
         open_bgp(bgp_socket, config)
 
     except TimeoutError:
@@ -506,7 +504,7 @@ if __name__ == "__main__":
             bgp_socket,
             (config["hold_time"]) / 3,
         ),
-    )  # send keep alives every 10s
+    )  # send keep alives every 10s by default
     keepalive_worker.setDaemon(True)
     keepalive_worker.start()
 
@@ -526,7 +524,7 @@ if __name__ == "__main__":
     time.sleep(3)
     update_bgp(
         bgp_socket,
-        BGP_MSS,
+        bgp_mss,
         prefixes_to_withdraw,
         path_attributes,
         prefixes_to_advertise,
