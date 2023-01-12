@@ -32,15 +32,15 @@ import socketserver
 import json
 
 
-def KeepAliveThread(conn, interval):
+def keepalive_thread(conn, interval):
 
     # infinite loop so that function do not terminate and thread do not end.
     while True:
         time.sleep(interval)
-        KeepAliveBGP(conn)
+        keepalive_bgp(conn)
 
 
-def ReceiveThread(conn):
+def receive_thread(conn):
 
     # infinite loop so that function do not terminate and thread do not end.
     while True:
@@ -63,14 +63,14 @@ def ReceiveThread(conn):
             if (
                 start_ptr >= end_ptr
             ):  # a single message was sent in the BGP packet OR it is the last message of the BGP packet
-                DecodeBGP(r[start_ptr:])
+                decode_bgp(r[start_ptr:])
                 break
             else:  # more messages left to decode
-                DecodeBGP(r[start_ptr:end_ptr])
+                decode_bgp(r[start_ptr:end_ptr])
                 r = r[end_ptr:]
 
 
-def DecodeBGP(msg):
+def decode_bgp(msg):
 
     msg_length, msg_type = struct.unpack("!HB", msg[0:3])
     if msg_type == 4:
@@ -97,11 +97,11 @@ def DecodeBGP(msg):
         ]
         nlri = msg[3 + 2 + withdrawn_routes_length + 2 + total_path_attributes_length :]
 
-        attr = DecodePathAttribute(path_attributes)
+        attr = decode_path_attribute(path_attributes)
 
-        for r in DecodeIPv4Prefix(withdrawn_routes):
+        for r in decode_ipv4_prefix(withdrawn_routes):
             del rib[r]
-        for r in DecodeIPv4Prefix(nlri):
+        for r in decode_ipv4_prefix(nlri):
             rib[r] = attr
 
         # uncomment to debug
@@ -138,7 +138,7 @@ def DecodeBGP(msg):
         print(timestamp + " - " + "Received NOTIFICATION")
 
 
-def OpenBGP(conn, config):
+def open_bgp(conn, config):
 
     # Build the BGP Message
     bgp_version = b"\x04"
@@ -167,7 +167,7 @@ def OpenBGP(conn, config):
     return 0
 
 
-def KeepAliveBGP(conn):
+def keepalive_bgp(conn):
 
     # Build the BGP Header
     total_length = 16 + 2 + 1
@@ -182,7 +182,7 @@ def KeepAliveBGP(conn):
     return 0
 
 
-def EncodeIPv4Prefix(address, netmask):
+def encode_ipv4_prefix(address, netmask):
 
     octet = address.split(".")
     length = struct.pack("!B", int(netmask))
@@ -201,7 +201,7 @@ def EncodeIPv4Prefix(address, netmask):
     return length + prefix
 
 
-def DecodeIPv4Prefix(bytes):
+def decode_ipv4_prefix(bytes):
     ptr = 0
     prefixes = []
     while ptr < len(bytes):
@@ -229,7 +229,7 @@ def DecodeIPv4Prefix(bytes):
     return prefixes
 
 
-def EncodePathAttribute(type, value):
+def encode_path_attribute(type, value):
 
     path_attributes = {
         "origin": [b"\x40", 1],
@@ -271,7 +271,7 @@ def EncodePathAttribute(type, value):
     return attribute_flag + attribute_type_code + attribute_length + attribute_value
 
 
-def DecodePathAttribute(bytes):
+def decode_path_attribute(bytes):
     ptr = 0
     path_attributes = dict()
 
@@ -330,7 +330,7 @@ def DecodePathAttribute(bytes):
     return path_attributes
 
 
-def UpdateBGP(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
+def update_bgp(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
 
     # Build the BGP Message
 
@@ -343,7 +343,7 @@ def UpdateBGP(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
     while len(withdrawn_routes) > 0 and not max_length_reached:
         route = withdrawn_routes.pop(0)
         addr, mask = route.split("/")
-        bgp_withdrawn_routes += EncodeIPv4Prefix(addr, mask)
+        bgp_withdrawn_routes += encode_ipv4_prefix(addr, mask)
         if (
             len(bgp_withdrawn_routes) + 16 + 2 + 1 + 2 + 2 + 100 >= bgp_mss
         ):  # + header + withdrawn_routes_length + total_path_attributes_length + 100 bytes margin for attributes
@@ -359,37 +359,37 @@ def UpdateBGP(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
 
     if not max_length_reached:
         try:
-            bgp_total_path_attributes += EncodePathAttribute(
+            bgp_total_path_attributes += encode_path_attribute(
                 "origin", path_attributes["origin"]
             )
         except KeyError:
             pass
         try:
-            bgp_total_path_attributes += EncodePathAttribute(
+            bgp_total_path_attributes += encode_path_attribute(
                 "as-path", path_attributes["as-path"]
             )
         except KeyError:
             pass
         try:
-            bgp_total_path_attributes += EncodePathAttribute(
+            bgp_total_path_attributes += encode_path_attribute(
                 "next-hop", path_attributes["next-hop"]
             )
         except KeyError:
             pass
         try:
-            bgp_total_path_attributes += EncodePathAttribute(
+            bgp_total_path_attributes += encode_path_attribute(
                 "med", path_attributes["med"]
             )
         except KeyError:
             pass
         try:
-            bgp_total_path_attributes += EncodePathAttribute(
+            bgp_total_path_attributes += encode_path_attribute(
                 "local_pref", path_attributes["local_pref"]
             )
         except KeyError:
             pass
         try:
-            bgp_total_path_attributes += EncodePathAttribute(
+            bgp_total_path_attributes += encode_path_attribute(
                 "communities", path_attributes["communities"]
             )
         except KeyError:
@@ -406,7 +406,7 @@ def UpdateBGP(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
     while len(nlri) > 0 and not max_length_reached:
         route = nlri.pop(0)
         addr, mask = route.split("/")
-        bgp_new_routes += EncodeIPv4Prefix(addr, mask)
+        bgp_new_routes += encode_ipv4_prefix(addr, mask)
         if (
             len(bgp_withdrawn_routes) + len(bgp_new_routes) + 16 + 2 + 1 + 2 + 2 + 100
             >= bgp_mss
@@ -432,7 +432,7 @@ def UpdateBGP(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
     if (
         len(withdrawn_routes) > 0 or len(nlri) > 0
     ):  # there are still BGP info to be updated that didn't fit this last Update message
-        UpdateBGP(conn, bgp_mss, withdrawn_routes, path_attributes, nlri)
+        update_bgp(conn, bgp_mss, withdrawn_routes, path_attributes, nlri)
 
     return 0
 
@@ -487,7 +487,7 @@ if __name__ == "__main__":
     try:
         bgp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         bgp_socket.connect((BGP_PEER, BGP_PORT))
-        OpenBGP(bgp_socket, config)
+        open_bgp(bgp_socket, config)
 
     except TimeoutError:
         timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
@@ -495,20 +495,20 @@ if __name__ == "__main__":
         exit()
 
     receive_worker = threading.Thread(
-        target=ReceiveThread, args=(bgp_socket,)
+        target=receive_thread, args=(bgp_socket,)
     )  # wait from BGP msg from peer and process them
     receive_worker.setDaemon(True)
     receive_worker.start()
 
-    keep_alive_worker = threading.Thread(
-        target=KeepAliveThread,
+    keepalive_worker = threading.Thread(
+        target=keepalive_thread,
         args=(
             bgp_socket,
             (config["hold_time"]) / 3,
         ),
     )  # send keep alives every 10s
-    keep_alive_worker.setDaemon(True)
-    keep_alive_worker.start()
+    keepalive_worker.setDaemon(True)
+    keepalive_worker.start()
 
     timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print(timestamp + " - " + "BGP is up.")
@@ -524,7 +524,7 @@ if __name__ == "__main__":
         prefixes_to_advertise.append(prefix + "/" + str(config["netmask"]))
 
     time.sleep(3)
-    UpdateBGP(
+    update_bgp(
         bgp_socket,
         BGP_MSS,
         prefixes_to_withdraw,
