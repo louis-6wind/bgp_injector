@@ -511,6 +511,9 @@ if __name__ == "__main__":
     keepalive_worker.setDaemon(True)
     keepalive_worker.start()
 
+    # send a first keepalive packet before sending the initial UPDATE packet
+    keepalive_bgp(bgp_socket)
+
     timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print(timestamp + " - " + "BGP is up.")
 
