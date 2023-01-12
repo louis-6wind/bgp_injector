@@ -206,7 +206,7 @@ def encode_path_attribute(type, value):
     attribute_type_code = struct.pack("!B", int(path_attributes[type][1]))
 
     if type == "origin":
-        attribute_value = struct.pack("!B", 1)
+        attribute_value = struct.pack("!B", value)
     elif type == "as-path":
         as_number_list = value.split(" ")
         attribute_value = struct.pack("!BB", 2, len(as_number_list))
