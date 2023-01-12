@@ -84,36 +84,6 @@ def decode_bgp(msg):
     elif msg_type == 2:
         timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         print(timestamp + " - " + "Received UPDATE")
-
-        withdrawn_routes_length = struct.unpack("!H", msg[3:5])[0]
-        withdrawn_routes = msg[5 : 5 + withdrawn_routes_length]
-        total_path_attributes_length = struct.unpack(
-            "!H", msg[5 + withdrawn_routes_length : 7 + withdrawn_routes_length]
-        )[0]
-        path_attributes = msg[
-            3
-            + 2
-            + withdrawn_routes_length
-            + 2 : 3
-            + 2
-            + withdrawn_routes_length
-            + 2
-            + total_path_attributes_length
-        ]
-        nlri = msg[3 + 2 + withdrawn_routes_length + 2 + total_path_attributes_length :]
-
-        attr = decode_path_attribute(path_attributes)
-
-        for r in decode_ipv4_prefix(withdrawn_routes):
-            del rib[r]
-        for r in decode_ipv4_prefix(nlri):
-            rib[r] = attr
-
-        # uncomment to debug
-        # print()
-        # print(rib)
-        # print()
-
     elif msg_type == 1:
         version, remote_as, holdtime, i1, i2, i3, i4, opt_length = struct.unpack(
             "!BHHBBBBB", msg[3:13]
@@ -220,34 +190,6 @@ def encode_ipv4_prefix(address, netmask):
     return length + prefix
 
 
-def decode_ipv4_prefix(bytes):
-    ptr = 0
-    prefixes = []
-    while ptr < len(bytes):
-        o1 = 0
-        o2 = 0
-        o3 = 0
-        o4 = 0
-        netmask = struct.unpack("!B", bytes[ptr : ptr + 1])[0]
-        if netmask <= 8:
-            o1 = struct.unpack("!B", bytes[ptr + 1 : ptr + 2])[0]
-            ptr = ptr + 2
-        elif netmask <= 16:
-            o1, o2 = struct.unpack("!BB", bytes[ptr + 1 : ptr + 3])
-            ptr = ptr + 3
-        elif netmask <= 24:
-            o1, o2, o3 = struct.unpack("!BBB", bytes[ptr + 1 : ptr + 4])
-            ptr = ptr + 4
-        else:
-            o1, o2, o3, o4 = struct.unpack("!BBBB", bytes[ptr + 1 : ptr + 5])
-            ptr = ptr + 5
-
-        prefixes.append(
-            str(o1) + "." + str(o2) + "." + str(o3) + "." + str(o4) + "/" + str(netmask)
-        )
-    return prefixes
-
-
 def encode_path_attribute(type, value):
 
     path_attributes = {
@@ -288,65 +230,6 @@ def encode_path_attribute(type, value):
     attribute_length = struct.pack("!B", len(attribute_value))
 
     return attribute_flag + attribute_type_code + attribute_length + attribute_value
-
-
-def decode_path_attribute(bytes):
-    ptr = 0
-    path_attributes = dict()
-
-    while ptr < len(bytes):
-        attribute_flag, attribute_type_code, attribute_length = struct.unpack(
-            "!BBB", bytes[ptr : ptr + 3]
-        )
-        if attribute_type_code == 1:  # origin
-            attribute_value = struct.unpack("!B", bytes[ptr + 3 : ptr + 4])[0]
-            if attribute_value == 0:
-                path_attributes["origin"] = "IGP"
-            elif attribute_value == 1:
-                path_attributes["origin"] = "EGP"
-            else:
-                path_attributes["origin"] = "INCOMPLETE"
-        elif attribute_type_code == 2:  # as-path
-            as_path = ""
-            as_path_type, as_path_length = struct.unpack(
-                "!BB", bytes[ptr + 3 : ptr + 5]
-            )
-            for i in range(as_path_length):
-                as_path += (
-                    str(
-                        struct.unpack("!H", bytes[ptr + 5 + 2 * i : ptr + 7 + 2 * i])[0]
-                    )
-                    + " "
-                )
-            path_attributes["as-path"] = as_path.strip()  # remove last trailing space
-        elif attribute_type_code == 3:  # next-hop
-            o1, o2, o3, o4 = struct.unpack("!BBBB", bytes[ptr + 3 : ptr + 7])
-            path_attributes["next-hop"] = (
-                str(o1) + "." + str(o2) + "." + str(o3) + "." + str(o4)
-            )
-        elif attribute_type_code == 4:  # med
-            path_attributes["med"] = struct.unpack("!I", bytes[ptr + 3 : ptr + 7])[0]
-        elif attribute_type_code == 5:  # local_pref
-            path_attributes["local_pref"] = struct.unpack(
-                "!I", bytes[ptr + 3 : ptr + 7]
-            )[0]
-        elif attribute_type_code == 8:  # communities
-            communities = ""
-            for i in range(attribute_length // 4):
-                aa = str(
-                    struct.unpack("!H", bytes[ptr + 3 + 4 * i : ptr + 5 + 4 * i])[0]
-                )
-                nn = str(
-                    struct.unpack("!H", bytes[ptr + 5 + 4 * i : ptr + 7 + 4 * i])[0]
-                )
-                communities += aa + ":" + nn + " "
-            path_attributes[
-                "communities"
-            ] = communities.strip()  # remove last trailing space
-
-        ptr = ptr + 3 + attribute_length
-
-    return path_attributes
 
 
 def update_bgp(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
