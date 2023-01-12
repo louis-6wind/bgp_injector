@@ -31,6 +31,7 @@ import struct
 import threading
 import json
 import os
+import re
 
 
 AFI_IPV4 = 1
@@ -195,6 +196,35 @@ def encode_ipv4_prefix(address, netmask):
     return length + prefix
 
 
+def encode_path_attribute_mp_reach_nrli(afi, safi, data, config):
+    hexstream = b""
+    hexstream += b"\x90"  # flags optional, extended
+    hexstream += struct.pack("!B", 14)  # type code MP_REACH_NLRI
+
+    hexstream2 = b""
+    hexstream2 += struct.pack("!H", afi)
+    hexstream2 += struct.pack("!B", safi)
+    hexstream2 += struct.pack("!B", 4)  # nexthop length
+    hexstream2 += socket.inet_aton(config["local_address"])  # nexthop IPv4
+    hexstream2 += b"\x00"  # SNPA
+    hexstream2 += data
+
+    hexstream += struct.pack("!H", len(hexstream2))  # length
+    hexstream += hexstream2
+
+    return hexstream
+
+
+def encode_path_attribute_linkstate(data):
+    hexstream = b""
+    hexstream += b"\x80"  # flags optional
+    hexstream += struct.pack("!B", 29)  # type code BGP-LS
+    hexstream += struct.pack("!B", len(data))  # length
+    hexstream += data
+
+    return hexstream
+
+
 def encode_path_attribute(type, value):
 
     path_attributes = {
@@ -237,7 +267,50 @@ def encode_path_attribute(type, value):
     return attribute_flag + attribute_type_code + attribute_length + attribute_value
 
 
-def update_bgp(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
+def encode_tlvs(tlvs):
+    stream = b""
+    for key, tlv_data in tlvs.items():
+        if isinstance(key, str) and key.isdigit():
+            tlv_type = int(key)
+        else:
+            # key is not a TLV
+            continue
+        if isinstance(tlv_data, str):
+            if tlv_type != 0:
+                # TLV type 0 is fake TLV
+                stream += struct.pack("!H", tlv_type)
+                stream += struct.pack("!H", len(bytes.fromhex(tlv_data)))
+            stream += bytes.fromhex(tlv_data)
+        elif isinstance(tlv_data, dict):
+            # TLV contains sub-TLV
+            stream += struct.pack("!H", tlv_type)
+
+            stream_subtlv = encode_tlvs(tlv_data)
+            stream += struct.pack("!H", len(stream_subtlv))
+            stream += stream_subtlv
+        else:
+            # invalid input
+            assert 0
+
+    return stream
+
+
+def encode_linkstate_nrli_tlv(nlri):
+    stream = b""
+    stream += bytes.fromhex(nlri["type"])
+
+    stream2 = b""
+    stream2 += bytes.fromhex(nlri["proto"])
+    stream2 += bytes.fromhex(nlri["id"])
+    stream2 += encode_tlvs(nlri)
+
+    stream += struct.pack("!H", len(stream2))
+    stream += stream2
+
+    return stream
+
+
+def update_bgp(conn, link_state, config):
 
     # Build the BGP Message
 
@@ -247,60 +320,33 @@ def update_bgp(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
     bgp_withdrawn_routes = b""
     max_length_reached = False
 
-    while len(withdrawn_routes) > 0 and not max_length_reached:
-        route = withdrawn_routes.pop(0)
-        addr, mask = route.split("/")
-        bgp_withdrawn_routes += encode_ipv4_prefix(addr, mask)
-        if (
-            len(bgp_withdrawn_routes) + 16 + 2 + 1 + 2 + 2 + 100 >= bgp_mss
-        ):  # + header + withdrawn_routes_length + total_path_attributes_length + 100 bytes margin for attributes
-            max_length_reached = True
-
     bgp_withdrawn_routes_length = struct.pack("!H", len(bgp_withdrawn_routes))
     bgp_withdrawn_routes = bgp_withdrawn_routes_length + bgp_withdrawn_routes
 
     # New Routes
     # 2 - Path Attributes
 
+    path_attributes = config["path_attributes"]
+    bgp_mss = config["mss"]
+
     bgp_total_path_attributes = b""
 
-    if not max_length_reached:
-        try:
-            bgp_total_path_attributes += encode_path_attribute(
-                "origin", path_attributes["origin"]
-            )
-        except KeyError:
-            pass
-        try:
-            bgp_total_path_attributes += encode_path_attribute(
-                "as-path", path_attributes["as-path"]
-            )
-        except KeyError:
-            pass
-        try:
-            bgp_total_path_attributes += encode_path_attribute(
-                "next-hop", path_attributes["next-hop"]
-            )
-        except KeyError:
-            pass
-        try:
-            bgp_total_path_attributes += encode_path_attribute(
-                "med", path_attributes["med"]
-            )
-        except KeyError:
-            pass
-        try:
-            bgp_total_path_attributes += encode_path_attribute(
-                "local_pref", path_attributes["local_pref"]
-            )
-        except KeyError:
-            pass
-        try:
-            bgp_total_path_attributes += encode_path_attribute(
-                "communities", path_attributes["communities"]
-            )
-        except KeyError:
-            pass
+    # encode link-state MP_REACH NLRI
+    data = encode_linkstate_nrli_tlv(link_state["nlri"])
+    bgp_total_path_attributes += encode_path_attribute_mp_reach_nrli(
+        AFI_LINKSTATE, SAFI_LINKSTATE, data, config
+    )
+
+    # encode classic attributes
+    for key in path_attributes.keys():
+        bgp_total_path_attributes += encode_path_attribute(key, path_attributes[key])
+
+    # encode link-state attributes
+    if "attr" in link_state:
+        data = encode_tlvs(link_state["attr"])
+    else:
+        data = b""
+    bgp_total_path_attributes += encode_path_attribute_linkstate(data)
 
     bgp_total_path_attributes_length = struct.pack("!H", len(bgp_total_path_attributes))
     bgp_total_path_attributes = (
@@ -310,15 +356,6 @@ def update_bgp(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
     # 3- Network Layer Reachability Information (NLRI)
 
     bgp_new_routes = b""
-    while len(nlri) > 0 and not max_length_reached:
-        route = nlri.pop(0)
-        addr, mask = route.split("/")
-        bgp_new_routes += encode_ipv4_prefix(addr, mask)
-        if (
-            len(bgp_withdrawn_routes) + len(bgp_new_routes) + 16 + 2 + 1 + 2 + 2 + 100
-            >= bgp_mss
-        ):  # + header + withdrawn_routes_length + total_path_attributes_length + 100 bytes margin for attributes
-            max_length_reached = True
 
     bgp_message = bgp_withdrawn_routes + bgp_total_path_attributes + bgp_new_routes
 
@@ -336,25 +373,7 @@ def update_bgp(conn, bgp_mss, withdrawn_routes, path_attributes, nlri):
     timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print(timestamp + " - " + "Sent UPDATE.")
 
-    if (
-        len(withdrawn_routes) > 0 or len(nlri) > 0
-    ):  # there are still BGP info to be updated that didn't fit this last Update message
-        update_bgp(conn, bgp_mss, withdrawn_routes, path_attributes, nlri)
-
     return 0
-
-
-def ip2str(ip_bytes):
-    ip_addr = struct.unpack("!BBBB", ip_bytes)
-    return (
-        str(int(ip_addr[0]))
-        + "."
-        + str(int(ip_addr[1]))
-        + "."
-        + str(int(ip_addr[2]))
-        + "."
-        + str(int(ip_addr[3]))
-    )
 
 
 def str2ip(ip_str):
@@ -365,22 +384,16 @@ def str2ip(ip_str):
     return ip_addr
 
 
-def prefix_generator(start_address, netmask):
-    addr = str2ip(start_address)
-    i = 0
-    while True:
-        yield ip2str(
-            struct.pack("!I", struct.unpack("!I", addr)[0] + i * (2 ** (32 - netmask)))
-        )
-        i += 1
-
-
 if __name__ == "__main__":
     CONFIG_FILENAME = os.path.join(sys.path[0], "bgp_injector.cfg")
 
     input_file = open(CONFIG_FILENAME, "r")
 
-    config = json.loads(input_file.read())
+    input = input_file.read()
+    # cleanup comments that are not supported by JSON
+    json_input = re.sub(r"//.*\n", "", input, flags=re.MULTILINE)
+
+    config = json.loads(json_input)
 
     bgp_peer = config["peer_address"]
     bgp_local = config["local_address"]
@@ -423,24 +436,13 @@ if __name__ == "__main__":
     timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print(timestamp + " - " + "BGP is up.")
 
-    prefixes_to_withdraw = []
-    prefixes_to_advertise = []
-    path_attributes = config["path_attributes"]
-
-    prefix_gen = prefix_generator(config["start_address"], config["netmask"])
-
-    for i in range(config["number_of_prefixes_to_inject"]):
-        prefix = next(prefix_gen)
-        prefixes_to_advertise.append(prefix + "/" + str(config["netmask"]))
-
     time.sleep(3)
-    update_bgp(
-        bgp_socket,
-        bgp_mss,
-        prefixes_to_withdraw,
-        path_attributes,
-        prefixes_to_advertise,
-    )
+    for link_state in config["link_states"]:
+        update_bgp(
+            bgp_socket,
+            link_state,
+            config,
+        )
 
     try:
         while True:
