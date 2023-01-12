@@ -33,6 +33,10 @@ import json
 import os
 
 
+AFI_IPV4 = 1
+SAFI_UNICAST = 1
+
+
 def keepalive_thread(conn, interval):
 
     # infinite loop so that function do not terminate and thread do not end.
@@ -139,6 +143,15 @@ def decode_bgp(msg):
         print(timestamp + " - " + "Received NOTIFICATION")
 
 
+def multiprotocol_capability(afi, safi):
+    hexstream = bytes.fromhex("02060104")
+    hexstream += struct.pack("!H", afi)
+    hexstream += struct.pack("!B", 0)
+    hexstream += struct.pack("!B", safi)
+
+    return hexstream
+
+
 def open_bgp(conn, config):
 
     # Build the BGP Message
@@ -151,9 +164,14 @@ def open_bgp(conn, config):
         "!BBBB", int(octet[0]), int(octet[1]), int(octet[2]), int(octet[3])
     )
 
-    bgp_opt_lenght = struct.pack("!B", 0)
+    bgp_opt = b""
+    bgp_opt += multiprotocol_capability(AFI_IPV4, SAFI_UNICAST)
 
-    bgp_message = bgp_version + bgp_as + bgp_hold_time + bgp_identifier + bgp_opt_lenght
+    bgp_opt_lenght = struct.pack("!B", len(bgp_opt))
+
+    bgp_message = (
+        bgp_version + bgp_as + bgp_hold_time + bgp_identifier + bgp_opt_lenght + bgp_opt
+    )
 
     # Build the BGP Header
     total_length = len(bgp_message) + 16 + 2 + 1
