@@ -36,6 +36,9 @@ import os
 AFI_IPV4 = 1
 SAFI_UNICAST = 1
 
+AFI_LINKSTATE = 16388
+SAFI_LINKSTATE = 71
+
 
 def keepalive_thread(conn, interval):
 
@@ -137,6 +140,7 @@ def open_bgp(conn, config):
 
     bgp_opt = b""
     bgp_opt += multiprotocol_capability(AFI_IPV4, SAFI_UNICAST)
+    bgp_opt += multiprotocol_capability(AFI_LINKSTATE, SAFI_LINKSTATE)
 
     bgp_opt_lenght = struct.pack("!B", len(bgp_opt))
 
