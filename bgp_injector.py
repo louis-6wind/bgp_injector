@@ -477,6 +477,7 @@ if __name__ == "__main__":
     config = json.loads(input_file.read())
 
     bgp_peer = config["peer_address"]
+    bgp_local = config["local_address"]
     bgp_mss = config["mss"]
     bgp_port = config["port"]
     rib = dict()
@@ -485,6 +486,7 @@ if __name__ == "__main__":
 
     try:
         bgp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        bgp_socket.bind((bgp_local, 0))
         bgp_socket.connect((bgp_peer, bgp_port))
         open_bgp(bgp_socket, config)
 
