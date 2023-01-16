@@ -29,8 +29,6 @@ import time
 from datetime import datetime
 import struct
 import threading
-import http.server
-import socketserver
 import json
 
 
