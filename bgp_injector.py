@@ -30,6 +30,7 @@ from datetime import datetime
 import struct
 import threading
 import json
+import os
 
 
 def keepalive_thread(conn, interval):
@@ -469,7 +470,7 @@ def prefix_generator(start_address, netmask):
 
 
 if __name__ == "__main__":
-    CONFIG_FILENAME = "bgp_injector.cfg"
+    CONFIG_FILENAME = os.path.join(sys.path[0], "bgp_injector.cfg")
 
     input_file = open(CONFIG_FILENAME, "r")
 
