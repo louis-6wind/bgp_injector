@@ -459,6 +459,43 @@ def removepid():
     sys.stderr.write("Removed PIDfile %s\n" % pid_file)
 
 
+def daemonize():
+    try:
+        pid = os.fork()
+        if pid > 0:
+            # Exit first parent
+            sys.exit(0)
+    except OSError as e:
+        print("Fork #1 failed: %d (%s)" % (e.errno, e.strerror))
+        sys.exit(1)
+
+    # Decouple from parent environment
+    os.chdir("/")
+    os.setsid()
+    os.umask(0)
+
+    # Do second fork
+    try:
+        pid = os.fork()
+        if pid > 0:
+            # Exit from second parent
+            sys.exit(0)
+    except OSError as e:
+        print("Fork #2 failed: %d (%s)" % (e.errno, e.strerror))
+        sys.exit(1)
+
+    # Redirect standard file descriptors
+    sys.stdout.flush()
+    sys.stderr.flush()
+    si = open(os.devnull, "r")
+    so = open(os.devnull, "a+")
+    se = open(os.devnull, "a+")
+
+    os.dup2(si.fileno(), sys.stdin.fileno())
+    os.dup2(so.fileno(), sys.stdout.fileno())
+    os.dup2(se.fileno(), sys.stderr.fileno())
+
+
 def term(signal, frame):
     timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print(timestamp + " - " + "^C received, shutting down.\n")
@@ -468,6 +505,7 @@ def term(signal, frame):
 
 
 if __name__ == "__main__":
+    daemonize()
     savepid()
 
     signal.signal(signal.SIGTERM, term)
