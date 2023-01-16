@@ -32,6 +32,8 @@ import threading
 import json
 import os
 import re
+import signal
+import errno
 
 
 AFI_IPV4 = 1
@@ -39,6 +41,9 @@ SAFI_UNICAST = 1
 
 AFI_LINKSTATE = 16388
 SAFI_LINKSTATE = 71
+
+saved_pid = False
+pid_file = "/var/run/bgp_injector.pid"
 
 
 def keepalive_thread(conn, interval):
@@ -384,7 +389,91 @@ def str2ip(ip_str):
     return ip_addr
 
 
+def check_pid(pid):
+    if pid < 0:  # user input error
+        return False
+    if pid == 0:  # all processes
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError as err:
+        if err.errno == errno.EPERM:  # a process we were denied access to
+            return True
+        if err.errno == errno.ESRCH:  # No such process
+            return False
+        # should never happen
+        return False
+
+
+def savepid():
+    ownid = os.getpid()
+
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    mode = ((os.R_OK | os.W_OK) << 6) | (os.R_OK << 3) | os.R_OK
+
+    try:
+        fd = os.open(pid_file, flags, mode)
+    except OSError:
+        try:
+            pid = open(pid_file, "r").readline().strip()
+            if check_pid(int(pid)):
+                sys.stderr.write(
+                    "PIDfile already exists and program still running %s\n" % pid_file
+                )
+                return False
+            else:
+                # If pid is not running, reopen file without O_EXCL
+                fd = os.open(pid_file, flags ^ os.O_EXCL, mode)
+        except (OSError, IOError, ValueError):
+            sys.stderr.write(
+                "issue accessing PID file %s (most likely permission or ownership)\n"
+                % pid_file
+            )
+            return False
+
+    try:
+        f = os.fdopen(fd, "w")
+        line = "%d\n" % ownid
+        f.write(line)
+        f.close()
+        saved_pid = True
+    except IOError:
+        sys.stderr.write("Can not create PIDfile %s\n" % pid_file)
+        return False
+    print("Created PIDfile %s with value %d\n" % (pid_file, ownid))
+    return True
+
+
+def removepid():
+    if not saved_pid:
+        return
+    try:
+        os.remove(pid_file)
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            pass
+        else:
+            sys.stderr.write("Can not remove PIDfile %s\n" % pid_file)
+            return
+    sys.stderr.write("Removed PIDfile %s\n" % pid_file)
+
+
+def term(signal, frame):
+    timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    print(timestamp + " - " + "^C received, shutting down.\n")
+    bgp_socket.close()
+    removepid()
+    exit()
+
+
 if __name__ == "__main__":
+    savepid()
+
+    signal.signal(signal.SIGTERM, term)
+    # CTRL + C
+    signal.signal(signal.SIGINT, term)
+
     CONFIG_FILENAME = os.path.join(sys.path[0], "bgp_injector.cfg")
 
     input_file = open(CONFIG_FILENAME, "r")
@@ -444,12 +533,5 @@ if __name__ == "__main__":
             config,
         )
 
-    try:
-        while True:
-            time.sleep(60)
-
-    except KeyboardInterrupt:
-        timestamp = str(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        print(timestamp + " - " + "^C received, shutting down.")
-        bgp_socket.close()
-        exit()
+    while True:
+        time.sleep(60)
